@@ -12,6 +12,17 @@ class Settings:
     MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "1000"))
     TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.7"))
     
+    # Application Configuration
+    PANTAS_NAME: str = os.getenv("PANTAS_NAME", "PANTAS")
+    PANTAS_DESCRIPTION: str = os.getenv(
+        "PANTAS_DESCRIPTION",
+        "PANTAS adalah aplikasi web internal Pemerintah Provinsi Kalimantan Barat untuk membantu mengelola dan mengakses informasi terkait proses layanan digital, prosedur operasional standar (SOP), dan dukungan teknis infrastruktur digital."
+    )
+    
+    # Support Configuration
+    WHATSAPP_NUMBER: str = os.getenv("WHATSAPP_NUMBER", "+62-812-3456-7890")
+    WHATSAPP_LINK: str = os.getenv("WHATSAPP_LINK", "https://wa.me/15551420825")
+    
     # API Configuration
     API_HOST: str = os.getenv("API_HOST", "127.0.0.1")
     API_PORT: int = int(os.getenv("API_PORT", "8000"))

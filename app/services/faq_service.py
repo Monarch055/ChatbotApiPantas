@@ -52,6 +52,31 @@ Additional Support Information:
         except Exception as e:
             logger.error(f"Error searching FAQ: {e}")
             return []
+    
+    async def get_faq_list(self) -> str:
+        """
+        Get a plain-text numbered list of all FAQs for direct display to users.
+        Returns formatted string ready for chatbot response.
+        """
+        try:
+            # Get all FAQs from repository
+            faqs = await self.faq_repository.get_all_faqs()
+            
+            if not faqs or len(faqs) == 0:
+                return ""
+            
+            # Format as numbered list
+            faq_lines = []
+            for idx, faq in enumerate(faqs, start=1):
+                # Extract question or title
+                question = faq.get('question', faq.get('title', 'N/A'))
+                faq_lines.append(f"{idx}. {question}")
+            
+            return "\n".join(faq_lines)
+            
+        except Exception as e:
+            logger.error(f"Error getting FAQ list: {e}")
+            return ""
 
 # Create service instance
 faq_service = FAQService()

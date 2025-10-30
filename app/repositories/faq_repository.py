@@ -93,6 +93,39 @@ class FAQRepository:
         except Exception as e:
             logger.error(f"Error searching FAQ content: {e}")
             return []
+    
+    async def get_all_faqs(self) -> List[Dict[str, Any]]:
+        """
+        Get all FAQs as a simple list with category and subcategory names.
+        Returns list of dicts with 'question' field formatted as "Category - Subcategory"
+        """
+        try:
+            # Get all categories with their subcategories
+            response = self.client.table("faq_categories").select("""
+                name,
+                faq_subcategories(name)
+            """).order("display_order").execute()
+            
+            if not response.data:
+                return []
+            
+            faq_list = []
+            for category in response.data:
+                category_name = category['name']
+                subcategories = category.get('faq_subcategories', [])
+                
+                for subcategory in subcategories:
+                    subcategory_name = subcategory['name']
+                    # Format as "Category - Subcategory"
+                    faq_list.append({
+                        'question': f"{category_name} - {subcategory_name}"
+                    })
+            
+            return faq_list
+            
+        except Exception as e:
+            logger.error(f"Error fetching all FAQs: {e}")
+            return []
 
 # Create repository instance
 faq_repository = FAQRepository()

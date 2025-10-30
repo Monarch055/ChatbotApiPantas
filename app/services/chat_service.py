@@ -37,6 +37,18 @@ class ChatService:
             "cara", "bagaimana", "langkah", "prosedur", "proses", "sop", "tutorial",
             "gimana", "step", "tahap", "panduan", "petunjuk"
         ]
+        
+        # Keywords for "What is PANTAS?" intent
+        self.pantas_keywords = [
+            "apa itu pantas", "pantas itu apa", "apa pantas", "jelaskan pantas",
+            "penjelasan pantas", "deskripsi pantas", "tentang pantas"
+        ]
+        
+        # Keywords for bot identity
+        self.identity_keywords = [
+            "siapa kamu", "siapa anda", "kamu siapa", "anda siapa",
+            "siapa dirimu", "identitas kamu", "kamu adalah"
+        ]
     
     async def _prepare_messages_with_smart_context(
         self, 
@@ -78,8 +90,14 @@ Jam Support:
 """
         else:
             # Use default system prompt with RAG context
-            final_system_prompt = f"""Anda adalah asisten AI customer support yang membantu dalam bahasa Indonesia. 
-Anda memiliki akses ke knowledge base perusahaan dan dapat memberikan panduan teknis.
+            final_system_prompt = f"""Anda adalah asisten chatbot untuk aplikasi web {settings.PANTAS_NAME} (Pemerintah Provinsi Kalimantan Barat).
+{settings.PANTAS_NAME} adalah aplikasi internal untuk membantu proses layanan digital, SOP, dan dukungan teknis infrastruktur digital.
+
+Anda membantu pengguna dengan:
+- Informasi tentang SOP dan prosedur pemerintahan
+- Proses pembuatan dan migrasi website
+- Panduan teknis terkait layanan digital
+- FAQ dan pertanyaan umum
 
 {self.plain_text_rules}
 
@@ -92,14 +110,17 @@ Instruksi PENTING:
 4. Jika dokumen memiliki 14 langkah, Anda HARUS menyebutkan SEMUA 14 langkah dengan lengkap
 5. Gunakan kata-kata PERSIS SAMA dengan yang ada di dokumen
 6. Format setiap langkah dengan nomor pada baris terpisah (1. ... \\n2. ... \\n3. ...)
-7. Jika informasi tidak ditemukan di dokumen atau tidak relevan, TOLAK dengan sopan dan arahkan ke WhatsApp support: {settings.WHATSAPP_NUMBER}
-8. Jawab dalam bahasa Indonesia dengan ramah dan profesional
+7. Jika informasi tidak ditemukan di dokumen atau tidak relevan dengan pemerintahan, TOLAK dengan sopan dan sarankan hubungi WhatsApp support: {settings.WHATSAPP_LINK}
+8. Jika user membutuhkan bantuan lebih lanjut di luar kemampuan Anda, arahkan ke WhatsApp: {settings.WHATSAPP_LINK}
+9. Jawab dalam bahasa Indonesia dengan ramah dan profesional
 
 CATATAN: Untuk SOP atau prosedur panjang, user lebih suka melihat SEMUA detail lengkap daripada ringkasan.
 
+Kontak Support WhatsApp: {settings.WHATSAPP_LINK}
 Jam Support:
 - Senin-Jumat: 09:00-18:00 WIB
 - Sabtu: 09:00-14:00 WIB
+- Darurat: 24/7
 - Darurat: 24/7
 """
         
@@ -142,6 +163,21 @@ Jam Support:
                     response=greeting,
                     conversation_id=session_id,
                     model_used="system-greeting",
+                    tokens_used=0
+                )
+
+            # Check for special intents that can be answered directly (0 tokens)
+            special_response = await self._check_special_intents(chat_request.message)
+            if special_response:
+                try:
+                    await self.chat_repository.add_message(session_id, "user", chat_request.message)
+                    await self.chat_repository.add_message(session_id, "assistant", special_response)
+                except Exception as e:
+                    logger.warning(f"Failed to store special intent conversation: {e}")
+                return ChatResponse(
+                    response=special_response,
+                    conversation_id=session_id,
+                    model_used="direct-answer",
                     tokens_used=0
                 )
 
@@ -326,6 +362,40 @@ Jam Support:
         text = text.lstrip('\n')
         
         return text.strip()
+
+    async def _check_special_intents(self, message: str) -> str | None:
+        """
+        Check if the message matches special intents that can be answered directly.
+        Returns the response text if matched, or None to continue normal flow.
+        """
+        if not message:
+            return None
+        
+        message_lower = message.lower()
+        
+        # Check for PANTAS identity question
+        if any(keyword in message_lower for keyword in self.pantas_keywords):
+            return settings.PANTAS_DESCRIPTION
+        
+        # Check for bot identity question ("Siapa kamu?", "Siapa anda?")
+        if any(keyword in message_lower for keyword in self.identity_keywords):
+            return f"Saya adalah asisten chatbot untuk aplikasi web {settings.PANTAS_NAME}. {settings.PANTAS_DESCRIPTION}\n\nSaya dapat membantu Anda dengan:\n- Menjawab pertanyaan tentang prosedur dan layanan pemerintahan\n- Memberikan panduan langkah demi langkah untuk berbagai layanan\n- Mengarahkan Anda ke informasi yang relevan\n\nJika ada yang bisa saya bantu, silakan bertanya!"
+        
+        # Check for FAQ list request
+        faq_keywords = ["layanan apa", "faq apa", "bantuan apa", "daftar faq", "semua faq", "list faq"]
+        if any(keyword in message_lower for keyword in faq_keywords):
+            try:
+                # Get all FAQs from service
+                faq_list = await self.faq_service.get_faq_list()
+                if faq_list:
+                    return f"Berikut adalah daftar layanan dan pertanyaan yang sering diajukan:\n\n{faq_list}\n\nSilakan pilih topik yang ingin Anda tanyakan, atau jika pertanyaan Anda tidak ada dalam daftar, silakan hubungi kami di WhatsApp: {settings.WHATSAPP_LINK}"
+                else:
+                    return f"Maaf, belum ada daftar FAQ yang tersedia saat ini. Untuk bantuan lebih lanjut, silakan hubungi kami di WhatsApp: {settings.WHATSAPP_LINK}"
+            except Exception as e:
+                logger.error(f"Error fetching FAQ list: {e}")
+                return None  # Fall back to normal flow
+        
+        return None  # No special intent matched, continue normal flow
 
     def _is_full_doc_intent(self, message: str) -> bool:
         """Heuristic to detect if user is asking for the full document."""
