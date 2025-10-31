@@ -43,6 +43,7 @@ build/
 test_*.py
 check_documents.py
 generate_embeddings.py
+serve_test_website.py
 
 # Temporary files
 *.tmp

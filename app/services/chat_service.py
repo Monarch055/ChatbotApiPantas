@@ -8,6 +8,7 @@ from app.models.schemas import Message, ChatRequest, ChatResponse
 from app.services.faq_service import faq_service
 from app.services.embedding_service import embedding_service
 from app.repositories import chat_session_repository
+from app.core.intent_engine import resolve as resolve_intent, render_template
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -36,18 +37,6 @@ class ChatService:
             "lengkap", "seluruh", "tampilkan lengkap", "semua langkah", "full doc", "dokumen lengkap",
             "cara", "bagaimana", "langkah", "prosedur", "proses", "sop", "tutorial",
             "gimana", "step", "tahap", "panduan", "petunjuk"
-        ]
-        
-        # Keywords for "What is PANTAS?" intent
-        self.pantas_keywords = [
-            "apa itu pantas", "pantas itu apa", "apa pantas", "jelaskan pantas",
-            "penjelasan pantas", "deskripsi pantas", "tentang pantas"
-        ]
-        
-        # Keywords for bot identity
-        self.identity_keywords = [
-            "siapa kamu", "siapa anda", "kamu siapa", "anda siapa",
-            "siapa dirimu", "identitas kamu", "kamu adalah"
         ]
     
     async def _prepare_messages_with_smart_context(
@@ -152,7 +141,7 @@ Jam Support:
                     "Cara menggunakan:\n"
                     "- Tanyakan topik yang Anda butuhkan (misal: 'SOP Pembuatan Website Baru di AWDI')\n"
                     "- Untuk melihat dokumen lengkap, tambahkan kata 'lengkap' atau gunakan opsi 'return_full_document'\n"
-                    f"- Bantuan lebih lanjut: WhatsApp {settings.WHATSAPP_NUMBER}"
+                    f"- Bantuan lebih lanjut: WhatsApp {settings.WHATSAPP_LINK}"
                 )
                 greeting = self._sanitize_plain_text(greeting)
                 try:
@@ -180,26 +169,9 @@ Jam Support:
                     model_used="direct-answer",
                     tokens_used=0
                 )
-
-            # Domain guard: Temporarily disabled due to OpenAI embedding non-determinism
-            # The issue: OpenAI embeddings have slight variations each time, causing
-            # the same query to sometimes find documents and sometimes not.
-            # This was causing valid government queries to be incorrectly refused.
-            # 
-            # The domain guard will be handled by the RAG context + system prompt instead:
-            # - If no relevant docs are found, the AI will naturally say it doesn't know
-            # - The system prompt enforces government-only scope
-            # - This avoids the false-negative problem while maintaining scope control
-            #
-            # Original code (disabled):
-            # in_scope = await self.embedding_service.has_relevant_docs(chat_request.message, threshold=0.3)
-            # if not in_scope:
-            #     return refusal_response
             
             logger.info(f"Processing query (domain guard disabled): {chat_request.message[:50]}...")
 
-            # Full document mode: if requested or inferred by keywords, return the top similar document directly
-            # This saves tokens and returns the exact document content without AI modification
             if chat_request.return_full_document or self._is_full_doc_intent(chat_request.message):
                 logger.info("Full document mode triggered - returning document directly without OpenAI")
                 
@@ -218,14 +190,9 @@ Jam Support:
                 
                 if similar_docs:
                     doc = similar_docs[0]
-                    # Return the EXACT document content with proper formatting
                     title = doc.get('title', 'Dokumen')
-                    content = doc.get('content', '')
-                    
-                    # Format the document with clear structure
+                    content = doc.get('content', '')             
                     full_text = f"{title}:\n\n{content}"
-                    
-                    # Only apply basic sanitization to fix formatting (preserve all content)
                     full_text = self._sanitize_plain_text(full_text)
                     
                     logger.info(f"Returning full document: {title} ({len(content)} chars, 0 tokens)")
@@ -240,13 +207,11 @@ Jam Support:
                         response=full_text,
                         conversation_id=session_id,
                         model_used="kb-direct",
-                        tokens_used=0  # Zero tokens - direct KB retrieval!
+                        tokens_used=0 
                     )
 
-            # Generate AI response with FAQ context
             response = await self._generate_ai_response_with_context(chat_request, session_id)
             
-            # Store the conversation in the database (async, don't block response)
             try:
                 await self.chat_repository.add_message(session_id, "user", chat_request.message)
                 await self.chat_repository.add_message(session_id, "assistant", response.response)
@@ -329,73 +294,71 @@ Jam Support:
         if not text:
             return text
         
-        # Remove Markdown formatting
         text = text.replace("```", "").replace("`", "")
         text = text.replace("**", "").replace("__", "")
         text = text.replace("_", "")
         
-        # Clean up excessive whitespace but preserve intentional line breaks
         lines = text.split('\n')
         cleaned_lines = []
         
         for line in lines:
-            # Remove excessive spaces within lines
             line = re.sub(r"[ \t]+", " ", line)
-            # Trim whitespace from start/end of line
             line = line.strip()
-            # Skip completely empty lines but keep them as separators
             if line or (cleaned_lines and cleaned_lines[-1] != ""):
                 cleaned_lines.append(line)
         
-        # Join lines back together
         text = '\n'.join(cleaned_lines)
+    
+        text = re.sub(r'(\d+)\.\s+', r'\n\1. ', text)  
+        text = re.sub(r'(\d+)\)\s+', r'\n\1. ', text) 
         
-        # Format numbered lists properly: ensure each numbered item is on its own line
-        # Match patterns like "1. " or "1) " followed by content
-        text = re.sub(r'(\d+)\.\s+', r'\n\1. ', text)  # Ensure line break before each number
-        text = re.sub(r'(\d+)\)\s+', r'\n\1. ', text)  # Convert "1)" to "1."
-        
-        # Clean up multiple consecutive newlines (max 2)
         text = re.sub(r'\n{3,}', '\n\n', text)
         
-        # Remove leading newline if text starts with a number
         text = text.lstrip('\n')
         
         return text.strip()
 
     async def _check_special_intents(self, message: str) -> str | None:
         """
-        Check if the message matches special intents that can be answered directly.
+        Resolve special intents via centralized JSON registry (intents.json).
         Returns the response text if matched, or None to continue normal flow.
         """
         if not message:
             return None
-        
-        message_lower = message.lower()
-        
-        # Check for PANTAS identity question
-        if any(keyword in message_lower for keyword in self.pantas_keywords):
-            return settings.PANTAS_DESCRIPTION
-        
-        # Check for bot identity question ("Siapa kamu?", "Siapa anda?")
-        if any(keyword in message_lower for keyword in self.identity_keywords):
-            return f"Saya adalah asisten chatbot untuk aplikasi web {settings.PANTAS_NAME}. {settings.PANTAS_DESCRIPTION}\n\nSaya dapat membantu Anda dengan:\n- Menjawab pertanyaan tentang prosedur dan layanan pemerintahan\n- Memberikan panduan langkah demi langkah untuk berbagai layanan\n- Mengarahkan Anda ke informasi yang relevan\n\nJika ada yang bisa saya bantu, silakan bertanya!"
-        
-        # Check for FAQ list request
-        faq_keywords = ["layanan apa", "faq apa", "bantuan apa", "daftar faq", "semua faq", "list faq"]
-        if any(keyword in message_lower for keyword in faq_keywords):
+
+        action = resolve_intent(message)
+        if not action:
+            return None
+
+        atype = action.get("type")
+
+        if atype == "static_text_env":
+            env_key = action.get("env_key", "")
+            value = getattr(settings, env_key, "") or ""
+            return self._sanitize_plain_text(value) if value else None
+
+        if atype == "template":
+            tpl = action.get("template", "")
+            if not tpl:
+                return None
+            return self._sanitize_plain_text(render_template(tpl))
+
+        if atype == "faq_list":
             try:
-                # Get all FAQs from service
                 faq_list = await self.faq_service.get_faq_list()
                 if faq_list:
-                    return f"Berikut adalah daftar layanan dan pertanyaan yang sering diajukan:\n\n{faq_list}\n\nSilakan pilih topik yang ingin Anda tanyakan, atau jika pertanyaan Anda tidak ada dalam daftar, silakan hubungi kami di WhatsApp: {settings.WHATSAPP_LINK}"
+                    return self._sanitize_plain_text(
+                        f"Berikut adalah daftar layanan dan pertanyaan yang sering diajukan:\n\n{faq_list}\n\nSilakan pilih topik yang ingin Anda tanyakan, atau jika pertanyaan Anda tidak ada dalam daftar, silakan hubungi kami di WhatsApp: {settings.WHATSAPP_LINK}"
+                    )
                 else:
-                    return f"Maaf, belum ada daftar FAQ yang tersedia saat ini. Untuk bantuan lebih lanjut, silakan hubungi kami di WhatsApp: {settings.WHATSAPP_LINK}"
+                    return self._sanitize_plain_text(
+                        f"Maaf, belum ada daftar FAQ yang tersedia saat ini. Untuk bantuan lebih lanjut, silakan hubungi kami di WhatsApp: {settings.WHATSAPP_LINK}"
+                    )
             except Exception as e:
                 logger.error(f"Error fetching FAQ list: {e}")
-                return None  # Fall back to normal flow
-        
-        return None  # No special intent matched, continue normal flow
+                return None
+
+        return None
 
     def _is_full_doc_intent(self, message: str) -> bool:
         """Heuristic to detect if user is asking for the full document."""

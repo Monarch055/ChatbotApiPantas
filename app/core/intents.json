@@ -1,0 +1,30 @@
+{
+  "intents": [
+    {
+      "id": "what_is_pantas",
+      "match": { "type": "fuzzy", "threshold": 0.8, "patterns": [
+        "apa itu pantas", "pantas itu apa", "apa pantas", "jelaskan pantas",
+        "penjelasan pantas", "deskripsi pantas", "tentang pantas"
+      ]},
+      "action": { "type": "static_text_env", "env_key": "PANTAS_DESCRIPTION" }
+    },
+    {
+      "id": "who_are_you",
+      "match": { "type": "fuzzy", "threshold": 0.8, "patterns": [
+        "siapa kamu", "siapa anda", "kamu siapa", "anda siapa",
+        "siapa dirimu", "identitas kamu", "kamu adalah"
+      ]},
+      "action": {
+        "type": "template",
+        "template": "Saya adalah asisten chatbot untuk aplikasi web {{PANTAS_NAME}}. {{PANTAS_DESCRIPTION}}\n\nSaya dapat membantu Anda dengan:\n- Menjawab pertanyaan tentang prosedur dan layanan pemerintahan\n- Memberikan panduan langkah demi langkah untuk berbagai layanan\n- Mengarahkan Anda ke informasi yang relevan\n\nJika ada yang bisa saya bantu, silakan bertanya!"
+      }
+    },
+    {
+      "id": "list_faq",
+      "match": { "type": "fuzzy", "threshold": 0.82, "patterns": [
+        "layanan apa", "faq apa", "bantuan apa", "daftar faq", "semua faq", "list faq"
+      ]},
+      "action": { "type": "faq_list" }
+    }
+  ]
+}

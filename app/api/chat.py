@@ -4,10 +4,8 @@ from app.models import ChatRequest, ChatResponse, ErrorResponse
 from app.services import chat_service
 import logging
 
-# Configure logging
 logger = logging.getLogger(__name__)
 
-# Create router
 router = APIRouter(prefix="/chat", tags=["Chat"])
 
 @router.post(
@@ -28,10 +26,8 @@ async def chat(request: ChatRequest):
     - **max_tokens**: Optional maximum length of the response
     """
     try:
-        # Validate the request
         chat_service.validate_request(request)
         
-        # Generate response
         response = await chat_service.generate_response(request)
         
         logger.info(f"Successfully generated chat response")
